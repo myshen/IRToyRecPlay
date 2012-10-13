@@ -27,54 +27,59 @@ static int peek_char = -1;
 
 void init_keyboard()
 {
-    tcgetattr(0,&init_settings);
-    new_settings = init_settings;
-    new_settings.c_lflag &= ~ICANON;
-    new_settings.c_lflag &= ~ECHO;
-    new_settings.c_lflag &= ~ISIG;
-    new_settings.c_cc[VMIN] = 1;
-    new_settings.c_cc[VTIME] = 0;
-    tcsetattr(0, TCSANOW, &new_settings);
+  tcgetattr(0, &init_settings);
+  new_settings = init_settings;
+  new_settings.c_lflag &= ~ICANON;
+  new_settings.c_lflag &= ~ECHO;
+  new_settings.c_lflag &= ~ISIG;
+  new_settings.c_cc[VMIN] = 1;
+  new_settings.c_cc[VTIME] = 0;
+  tcsetattr(0, TCSANOW, &new_settings);
 }
 
 void close_keyboard()
 {
-    tcsetattr(0, TCSANOW, &init_settings);
+  tcsetattr(0, TCSANOW, &init_settings);
 }
 
 int kbhit()
 {
-    unsigned char ch;
-    int nread;
+  struct termios save_settings;
+  cc_t vmin;
+  unsigned char ch;
+  int nread;
+  int ret = 0;
 
-    if (peek_char != -1) return 1;
-    new_settings.c_cc[VMIN]=0;
+  if (peek_char != -1) {
+    ret = 1;
+  } else {
+    tcgetattr(0, &save_settings);
+
+    new_settings.c_cc[VMIN] = 0;
     tcsetattr(0, TCSANOW, &new_settings);
-    nread = read(0,&ch,1);
-    new_settings.c_cc[VMIN]=1;
+    nread = read(0, &ch, 1);
+    new_settings.c_cc[VMIN] = 1;
     tcsetattr(0, TCSANOW, &new_settings);
-    if(nread == 1)
-    {
-        peek_char = ch;
-        return ch;
+    if (nread == 1) {
+      peek_char = ch;
+      ret = ch;
     }
 
-    return 0;
+    tcsetattr(0, TCSANOW, &save_settings);
+  }
+  return ret;
 }
 
-int getch()
+int get_ch()
 {
-    char ch;
-
-    if(peek_char != -1)
-    {
-        ch = peek_char;
-        peek_char = -1;
-        return ch;
-    }
-    read(0,&ch,1);
+  char ch;
+  if (peek_char != -1) {
+    ch = peek_char;
+    peek_char = -1;
     return ch;
+  }
+  read(0, &ch, 1);
+  return ch;
 }
 
 #endif
-

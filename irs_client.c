@@ -1,16 +1,9 @@
 #include "irs_client.h"
 
-extern int verbose;
-extern BOOL useHandshake;
-extern BOOL countreq;
-extern BOOL completereq;
-
 #undef RETRIES
 #define RETRIES 2
 
-#define IRS_READ_BUFSIZE 512
-
-#define IRS_NO_PACKET_SIZE 0
+#define IRS_NO_PACKET_SIZE -1
 
 int IRs_begin(int fd, char **ret_version_buffer)
 {
@@ -120,79 +113,13 @@ unsigned int IRs_get_next_packet_size(int fd, BOOL use_handshake) {
   return bytes;
 }
 
-void IRs_fprint(FILE *stream, char *command, unsigned int len)
-{
-  unsigned int i = 0;
-  for (; i < len; i += 2) {
-    fprintf(stream, "%02X%02X ", command[i], command[i + 1]);
-  }
-}
-
-int IRs_rx(int fd, float resolution, IRBYTE **command) {
-  unsigned int size = 0;
-  char buffer[IRS_READ_BUFSIZE] = {0};
-  IRBYTE *currcommand = *command;
-  IRCODE IRCode;
-  double NewIRcode;
-  int nrbytes, c;
-  BOOL finished_reading = FALSE;
-
-  *command = (IRBYTE *)(realloc(*command, size * sizeof(IRBYTE)));
-  currcommand = *command;
-
-  while ((nrbytes = serial_read(fd, buffer, sizeof(buffer), READ_RETRY)) > 0) {
-    // comment out to avoid exiting.
-    // if (nrbytes % 2)
-    //     exit(-1); // JTR IRTOY should ALWAYS return even number of BYTE values
-
-    size += nrbytes;
-    *command = (IRBYTE *)(realloc(*command, size * sizeof(IRBYTE)));
-    currcommand = &(*command)[size - nrbytes];
-
-    fprintf(stderr, "got %d bytes", nrbytes);
-
-    // run through what was read by the toy
-    for (c = 0; c < nrbytes; c += 2) {
-      IRCode = (IRBYTE) buffer[c];
-      IRCode |= (buffer[c + 1] << 8);
-
-      if (IRCode == 0xFFFF) {
-        currcommand[c] = 0xFF;
-        currcommand[c + 1] = 0xFF;
-
-        size = size - nrbytes + (c + 1) + 1;
-        *command = (IRBYTE *)(realloc(*command, size * sizeof(IRBYTE)));
-
-        finished_reading = TRUE;
-      } else {
-        NewIRcode = ((double)IRCode * 21.3333) / resolution;
-        currcommand[c] = (IRBYTE)NewIRcode;
-        currcommand[c + 1] = (IRBYTE)((NewIRcode) / 256) & 0xFF;
-      }
-      fprintf(stderr, "%04X ", ((IRCODE *)currcommand)[c / 2]);
-
-      if (finished_reading == TRUE) {
-        break;
-      }
-    }
-
-    if (finished_reading == TRUE) {
-      fprintf(stderr, "\n");
-      fprintf(stderr, "Captured command.\n");
-      break;
-    }
-  }
-
-  return size;
-}
-
-int IRs_tx(int fd, char *buffer, unsigned int buflen) {
+int IRs_tx_buffer(int fd, char *buffer, unsigned int buflen) {
   // TX a buffer of arbitrary length
   // Takes into account handshaking, splitting the buffer into chunks
   // handleable by the IR Toy and does completion checks.
 
   unsigned int i;
-  unsigned int bytes_to_tx;
+  int bytes_to_tx;
   int bytes_txd;
   int ttl_bytes_txd = 0;
   int irtoy_ttl_bytes_txd;
@@ -207,18 +134,22 @@ int IRs_tx(int fd, char *buffer, unsigned int buflen) {
   while (bufoffset != bufmax) {
     bytes_to_tx = IRs_get_next_packet_size(fd, useHandshake);
     if (bytes_to_tx == IRS_NO_PACKET_SIZE) {
-      fprintf(stderr, "Did not receive packet size. Waiting a bit to try again...\n");
-      sleep_(0.1);
+      fprintf(stderr, "Did not receive packet size. Unable to transmit. Abort.\n");
+      return -1;
     } else {
+      if (bytes_to_tx < 0) {
+        fprintf(stderr, "Bad number of bytes to send. Waiting.\n");
+        sleep_(0.1);
+        continue;
+      }
       if (bufmax - bufoffset < bytes_to_tx) {
-        fprintf(stderr, 
-             "bytes_to_tx (%u) is greater than number of bytes left (%ld). Setting to %ld.\n",
-             bytes_to_tx, bufmax - bufoffset, bufmax - bufoffset);
         bytes_to_tx = bufmax - bufoffset;
       }
       if (verbose) {
-        fprintf(stderr, "Sending %u bytes to IRToy:\n", bytes_to_tx);
-        IRs_fprint(stderr, bufoffset, bytes_to_tx);
+        fprintf(stderr, "Sending %d bytes to IRToy:\n", bytes_to_tx);
+        for (i = 0; i < bytes_to_tx; i++) {
+          fprintf(stderr, " %02X ", (IRBYTE)bufoffset[i]);
+        }
         fprintf(stderr, "\n");
       }
 
@@ -236,10 +167,7 @@ int IRs_tx(int fd, char *buffer, unsigned int buflen) {
     }
   }
 
-  // Exit transmit unit if there was nothing to send or the last two bytes of
-  // buffer are not 0xFF.
-  if (buflen == 0 || 
-      (buffer[buflen - 1] != 0xFF && buffer[buflen - 2] != 0xFF)) {
+  if (buflen == 0) {
     serial_write(fd, "\xFF\xFF", 2);
   }
 
@@ -261,7 +189,7 @@ int IRs_tx(int fd, char *buffer, unsigned int buflen) {
           fprintf(stderr, "failed");
         }
       } else {
-        fprintf(stderr, "Bad sent count: ");
+        fprintf(stderr, "Bad count reply: ");
         for (i = 0; i < 3; i++) {
           fprintf(stderr, " %02X ", (IRBYTE)buffer_checks[i]);
         }
@@ -280,8 +208,10 @@ int IRs_tx(int fd, char *buffer, unsigned int buflen) {
       } else if (buffer_checks[0] == 'F') {
         fprintf(stderr, "Error, transmit was interrupted at some point!!!");
       } else {
-        fprintf(stderr, "Bad completion status: ");
-        fprintf(stderr, "%02X", (IRBYTE)buffer_checks[i]);
+        fprintf(stderr, "Bad completion reply:");
+        for (i = 0; i < 1; i++) {
+          fprintf(stderr, " %02X ", (IRBYTE)buffer_checks[i]);
+        }
       }
       fprintf(stderr, "\n");
     } else {
@@ -290,31 +220,6 @@ int IRs_tx(int fd, char *buffer, unsigned int buflen) {
   }
 
   return ttl_bytes_txd;
-}
-
-void IRs_enter_transmit_unit(int fd)
-{
-  // IRs mode IRS_TRANSMIT_unit command
-  serial_write(fd, "\x03", 1);
-}
-
-void IRs_set_sample_options(int fd)
-{
-  if (useHandshake) {
-    fprintf(stderr, "Enabling handshaking.\n");
-    // cause packet handshake to be sent
-    serial_write(fd, "\x26", 1);
-  }
-  if (countreq) {
-    fprintf(stderr, "Asking for transmit count reporting.\n");
-    // cause transmit count to be returned
-    serial_write(fd, "\x24", 1);
-  }
-  if (completereq) {
-    fprintf(stderr, "Asking for completion reporting.\n");
-    // cause completion status to be returned
-    serial_write(fd, "\x25", 1);
-  }
 }
 
 void IRs_play(char *param_fname, int fd, char *param_delay, int (* play_file)(char *, int))
@@ -330,6 +235,24 @@ void IRs_play(char *param_fname, int fd, char *param_delay, int (* play_file)(ch
 
   fprintf(stderr, "Playing back files...\n");
 
+  useHandshake = TRUE;
+
+  if (useHandshake) {
+    fprintf(stderr, "Enabling handshaking.\n");
+    // cause packet handshake to be sent
+    serial_write(fd, "\x26", 1);
+  }
+  if (countreq) {
+    fprintf(stderr, "Asking for transmit count reporting.\n");
+    // cause transmit count to be returned
+    serial_write(fd, "\x24", 1);
+  }
+  if (completereq) {
+    fprintf(stderr, "Asking for completion reporting.\n");
+    // cause completion status to be returned
+    serial_write(fd, "\x25", 1);
+  }
+
   while (1) {
     // If file exists then single play mode, otherwise assume there are
     // multiple bin files and play them
@@ -339,7 +262,7 @@ void IRs_play(char *param_fname, int fd, char *param_delay, int (* play_file)(ch
       sprintf(fnameseq, "%s_%03d.bin", param_fname, fcounter);
       if (!file_exists(fnameseq)) {
         if (fcounter > 0) {
-          printf("%s does not exist. No more file(s).\n", fnameseq);
+          printf("No more file(s).\n");
         } else {
           printf("Bin file does not exist.\n");
         }
@@ -370,7 +293,6 @@ void IRs_play(char *param_fname, int fd, char *param_delay, int (* play_file)(ch
       sleep_(delay);
     }
 
-    IRs_enter_transmit_unit(fd);
     play_status = play_file(fnameseq, fd);
 
     if (soloplay==TRUE) {

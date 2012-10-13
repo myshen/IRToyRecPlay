@@ -25,14 +25,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
-
 #include <string.h>
+#include <unistd.h>
+
+#if _WIN32
+#else
+#include <errno.h>
+#endif
 
 #include "serial.h"
 
 int serial_setup(int fd, unsigned long speed)
 {
-#if IS_WIN32
+#if _WIN32
 	COMMTIMEOUTS timeouts;
 	DCB dcb = {0};
 	HANDLE hCom = (HANDLE)fd;
@@ -103,7 +108,7 @@ int serial_setup(int fd, unsigned long speed)
 	t_opt.c_cc[VTIME] = 10;
 
 #if IS_DARWIN
-	if( tcsetattr(fd, TCSANOW, &t_opt) < 0 ) {
+	if (tcsetattr(fd, TCSANOW, &t_opt) < 0) {
 		return -1;
 	}
 
@@ -116,17 +121,21 @@ int serial_setup(int fd, unsigned long speed)
 #endif
 }
 
-int serial_write(int fd,  char *buf, int size)
+int serial_write(int fd, const char *buf, int size) {
+  return serial_write(fd, (char*)buf, size);
+}
+
+int serial_write(int fd, char *buf, int size)
 {
 	int ret = 0;
-#if IS_WIN32
+#if _WIN32
 	HANDLE hCom = (HANDLE)fd;
 	int res = 0;
 	unsigned long bwritten = 0;
 
 	res = WriteFile(hCom, buf, size, &bwritten, NULL);
 	//DWORD dw = GetLastError();
-   // printf("serial.c: res = %i, bwritten= %lu, size = %i, handle= %lu, GetLastError=%lu\n\n",res,bwritten,size,hCom,dw);
+  // printf("serial.c: res = %i, bwritten= %lu, size = %i, handle= %lu, GetLastError=%lu\n\n",res,bwritten,size,hCom,dw);
 	if( res == FALSE ) {
 		ret = -1;
 	} else {
@@ -137,64 +146,68 @@ int serial_write(int fd,  char *buf, int size)
 #endif
 
 #if DEBUG
-	if (ret != size)
-		fprintf(stderr, "Error sending data (written %d should have written %d)\n", ret, size);
+	if (ret != size) {
+    if (ret == -1) {
+      fprintf(stderr, "Error code: %d\n", ret);
+    } else {
+      fprintf(stderr, "Error sending %d bytes (wrote %d)\n", size, ret);
+    }
+  }
 #endif
 
 	return ret;
 }
 
-int serial_read(int fd, char *buf, int size)
+int serial_read(int fd, char *buf, int size, int retry_limit)
 {
-	int len = 0;
-	int ret = 0;
+  int len = 0;
+  int rbytes = 0;
 
-    #if IS_WIN32
-	HANDLE hCom = (HANDLE)fd;
-	unsigned long bread = 0;
+#if _WIN32
+  HANDLE hCom = (HANDLE)fd;
+  unsigned long bread = 0;
 
-	ret = ReadFile(hCom, buf, size, &bread, NULL);
+  rbytes = ReadFile(hCom, buf, size, &bread, NULL);
 
-	if( ret == FALSE || ret==-1 ) {
-		len = -1;
-	} else {
-		len = bread;
-	}
+  if (rbytes == FALSE || rbytes == -1) {
+    len = -1;
+  } else {
+    len = bread;
+  }
 
 #else
-	int timeout = 0;
-	while (len < size) {
-		ret = read(fd, buf+len, size-len);
-		if (ret == -1){
-			//printf("ret -1");
-			return -1;
-		}
-
-		if (ret == 0) {
-			timeout++;
-
-			if (timeout >= 10)
-				break;
-
-			continue;
-		}
-
-		len += ret;
-	}
+  int retries = 0;
+  while (len < size) {
+    rbytes = read(fd, buf + len, size - len);
+    //fprintf(stderr, "\tread %d (%d of %d) bytes\t(%d of %d)\n", rbytes, len, size, retries, retry_limit);
+    if (rbytes == -1){
+      //fprintf(stderr, "rbytes -1");
+      return -1;
+    } else if (rbytes == 0) {
+      retries++;
+      if (retries >= retry_limit) {
+        break;
+      }
+    } else {
+      retries = 0;
+      len += rbytes;
+    }
+  }
 #endif
 
 #if DEBUG
-	if (len != size)
-		fprintf(stderr, "Error receiving data (read %d should have read %d)\n", len, size);
+  if (len != size) {
+    fprintf(stderr, "Error receiving %d bytes (read %d)\n", size, len);
+  }
 #endif
 
-	return len;
+  return len;
 }
 
-int serial_open( char *port)
+int serial_open(char *port)
 {
 	int fd;
-#if IS_WIN32
+#if _WIN32
 	static char full_path[32] = {0};
 
 	HANDLE hCom = NULL;
@@ -212,9 +225,14 @@ int serial_open( char *port)
 		fd = (int)hCom;
 	}
 #else
-	fd = open(port, O_RDWR | O_NOCTTY | O_NDELAY);
+	fd = open(port, O_RDWR | O_NOCTTY | O_NDELAY | O_NONBLOCK);
 	if (fd == -1) {
-		//fprintf(stderr, "Could not open serial port.\n");
+		fprintf(stderr, "Could not open serial port: ");
+    if (errno == ENOENT) {
+      fprintf(stderr, "No such file or directory: %s\n", port);
+    } else {
+      fprintf(stderr, "errno: %d\n", errno);
+    }
 		return -1;
 	}
 #endif
@@ -223,13 +241,11 @@ int serial_open( char *port)
 
 int serial_close(int fd)
 {
-#if IS_WIN32
+#if _WIN32
 	HANDLE hCom = (HANDLE)fd;
-
-	CloseHandle(hCom);
+	return CloseHandle(hCom);
 #else
-	close(fd);
+	return close(fd);
 #endif
-	return 0;
 }
 

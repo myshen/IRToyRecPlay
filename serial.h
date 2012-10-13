@@ -61,6 +61,10 @@
 
 #include <stdint.h>
 
+#ifndef READ_RETRY
+#define READ_RETRY 3
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #include <time.h>
@@ -72,7 +76,6 @@
 
 #else
 
-#include <unistd.h>
 #include <termios.h>
 #include <sys/select.h>
 #include <sys/types.h>
@@ -81,8 +84,9 @@
 #endif
 
 int serial_setup(int fd, unsigned long speed);
+int serial_write(int fd, const char *buf, int size);
 int serial_write(int fd, char *buf, int size);
-int serial_read(int fd, char *buf, int size);
+int serial_read(int fd, char *buf, int size, int retry_limit);
 int serial_open(char *port);
 int serial_close(int fd);
 

@@ -20,27 +20,26 @@ Where Labs, LLC, 208 Pine Street, Muscatine, IA 52761,USA
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
-
 #include <time.h>
+
 #ifdef _WIN32
+
 #include <conio.h>
 #include <windef.h>
-#include <windows.h>
+
 #else
+
 #include <sys/select.h>
-#include <ncurses.h>
 #include <stdbool.h>
-#include <unistd.h>
 #include <stdint.h>
-#include "kbhit.h"
+
 #endif
 
-#include "serial.h"
+#include "irs_client.h"
+#include "kbhit.h"
 
-
-int IRrecord(	char *,int,float,char *);
-void IRplay(	char *,int,char *,char *);
+int IR_bin_record(char *,int,float,char *);
+void IR_bin_play(char *,int,char *,char *);
 
 #endif // BIN_H_INCLUDED
