@@ -1,34 +1,48 @@
 /*
-    Written and maintained by the IR TOY Project and http://dangerousprototypes.com
-    WIKI page:    http://dangerousprototypes.com/usb-ir-toy-manual/
-    Forum page:   http://dangerousprototypes.com/forum/viewforum.php?f=29&sid=cdcf3a3177044bc1382305a921585bca
-********************************************************************************************************************
+Written and maintained by the IR TOY Project and http://dangerousprototypes.com
+WIKI page:    http://dangerousprototypes.com/usb-ir-toy-manual/
+Forum page:   http://dangerousprototypes.com/forum/viewforum.php?f=29&sid=cdcf3a3177044bc1382305a921585bca
+
+*******************************************************************************
 
 Copyright (C) 2011 Where Labs, LLC (DangerousPrototypes.com/Ian Lesnet)
 
-This work is free: you can redistribute it and/or modify it under the terms of Creative Commons Attribution ShareAlike license v3.0
+This work is free: you can redistribute it and/or modify it under the terms of
+Creative Commons Attribution ShareAlike license v3.0
 
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the License for more details. You should have received a copy of the License along with this program. If not, see <http://creativecommons.org/licenses/by-sa/3.0/>.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the License for more details. You should have received
+a copy of the License along with this program. If not, see
+<http://creativecommons.org/licenses/by-sa/3.0/>.
 
 Contact Details: http://www.DangerousPrototypes.com
 
-********************************************************************************************************************* */
+*******************************************************************************
+*/
 
 /* spanner 2010-10 v0.31
- * some minor tidy up of text, finished implementation of a v minimal verbose display option
+ * some minor tidy up of text, finished implementation of a v minimal verbose
+ * display option
  * Added two automated / macro play modes to the original play mode:
  * Three play modes:
  * 1. -p f NAME
  *     This is the unchanged method form the origianl release.
- *     Plays all bin files matching NAME_nnn.bin, where nnn starts at 000 and consists of SEQUENTIAL numbers. Stops at first gap in numbers, or last file.
+ *     Plays all bin files matching NAME_nnn.bin, where nnn starts at 000 and
+ *     consists of SEQUENTIAL numbers. Stops at first gap in numbers, or last
+ *     file.
  *     In this mode user MUST press any key, except 'x', to play next file/command.
  * 2. -p f NAME - a nnn
- *     Plays as above, except does NOT wait for any key to be pressed, instead delays nnn miliseconds between sending each file.
- *     500 is recommended as a starting delay. On old P4 computer, no delay always hangs the IRToy (have to uplug & plug in again to reset).
+ *     Plays as above, except does NOT wait for any key to be pressed, instead
+ *     delays nnn miliseconds between sending each file.
+ *     500 is recommended as a starting delay. On old P4 computer, no delay
+ *     always hangs the IRToy (have to uplug & plug in again to reset).
  * 3. -q -f NAME
  *     Play command files listed in the file indicated in -f parameter (requires -f )
  *
- *         Note the file names can be random, ie the numbered sequential rule does not apply.
+ *         Note the file names can be random, ie the numbered sequential rule
+ *         does not apply.
+ *
  *         Sample file content:
  *         sanyo_000.bin
  *         sanyo_010.bin
@@ -54,8 +68,9 @@ Contact Details: http://www.DangerousPrototypes.com
 //
 // *** new in v0.8
 // added -b buffer parameter for playback, e.g -b 32 , to  finetune playback
-// added single playing file when an complete filename with extension .bin is specified
-// in recording mode, filename with extension bin is overwritten. (overwrites the same file in single mode)
+// added single playing file when an complete filename with extension .bin is
+// specified in recording mode, filename with extension bin is overwritten.
+// (overwrites the same file in single mode)
 
 // 6/4/2011   (fix transmit problem)http://dangerousprototypes.com/forum/viewtopic.php?f=29&t=2363
 // 6/6/2011    added fix to other file format.
@@ -81,32 +96,46 @@ Contact Details: http://www.DangerousPrototypes.com
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #ifdef _WIN32
 
 #include <conio.h>
 #include <windef.h>
-#include <windows.h>
 
 #else
 
-#include <sys/select.h>
-#include <ncurses.h>
-#include <stdbool.h>
-#include <unistd.h>
+#include <signal.h>
 
 #endif
 
 #include "config.h"
 #include "serial.h"
+#include "bin.h"
 #include "txt.h"
 #include "ols.h"
-#include "bin.h"
 #include "queue.h"
 
-#undef RETRIES
-#define RETRIES 2
+int fd;
+
+#ifdef _WIN32
+#else
+
+BOOL terminated = FALSE;
+void terminate(int param)
+{
+  if (terminated) {
+    return;
+  }
+  // wait a bit for the serial port to clear
+  fprintf(stderr, "shutting down...");
+  fprintf(stderr, "wait for serial port to clear...");
+  sleep_(0.05);
+  serial_close(fd);
+  fprintf(stderr, "done.\n");
+  exit(0);
+}
+
+#endif
 
 // IRToy Recorder/Player error codes
 #define E_IRTOY_NORESPONSE 1
@@ -115,9 +144,8 @@ Contact Details: http://www.DangerousPrototypes.com
 //int modem = FALSE;   //set this to TRUE if testing a MODEM
 int verbose = 0;
 BOOL useHandshake = TRUE;
-char completereq = 1;
-char countreq = 1;
-
+BOOL completereq = TRUE;
+BOOL countreq = TRUE;
 
 unsigned int sleep_(float seconds) {
 #ifdef _WIN32
@@ -133,15 +161,6 @@ unsigned int sleep_(float seconds) {
 #endif
 }
 
-int get_char() {
-#ifdef _WIN32
-  return getch();
-# else
-  return get_ch();
-  //return getchar_unlocked();
-# endif
-}
-
 BOOL file_exists(const char * filename)
 {
   FILE *file = fopen(filename, "r");
@@ -151,6 +170,119 @@ BOOL file_exists(const char * filename)
     return true;
   }
   return false;
+}
+
+char *freadline(FILE *stream) {
+  unsigned int i = 0;
+  char byte;
+  char *buffer = (char *)(malloc(1 * sizeof(char)));
+
+  while ((fread(&byte, 1, 1, stream))) {
+    if (byte == '\n') {
+      break;
+    }
+    buffer[i] = byte; 
+    i++;
+    buffer = (char *)(realloc(buffer, (i + 1) * sizeof(char)));
+  }
+
+  buffer[i] = '\n';
+  return buffer;
+}
+
+int run_interactive(int fd) {
+  BOOL running = TRUE;
+  BOOL next_is_cmd = FALSE;
+
+  char buffer[1024];
+  unsigned short i = 0;
+
+  fprintf(stderr, "running interactively!\n");
+
+  while (running) {
+    fprintf(stderr, "\n> ");
+    char *line = freadline(stdin);
+    if (strncmp(line, "q\n", 2) == 0 || strncmp(line, "quit\n", 5) == 0 || (strlen(line) == 3 && feof(stdin))) {
+      fprintf(stderr, "quitting\n");
+      running = FALSE;
+    } else if (strncmp(line, "h\n", 2) == 0 || strncmp(line, "help\n", 5) == 0) {
+      fprintf(stdout, "h|help\t- help\n");
+      fprintf(stdout, "q|quit\t- quit\n");
+      fprintf(stdout, "r <filename>\t- record\n");
+      fprintf(stdout, "p <filename>\t- play\n");
+    } else if (strncmp(line, "r ", 2) == 0) {
+      fprintf(stderr, "recording ");
+      char *tok = strtok(line + 2 * sizeof(char), " \n");
+      char *filename = NULL;
+      while (tok != NULL) {
+        if (filename == NULL) {
+          filename = tok;
+          break;
+        }
+        tok = strtok(NULL, " \n");
+      }
+      fprintf(stderr, "%s\n", filename);
+
+      if (file_exists(filename)) {
+        fprintf(stderr, "File %s already exists. Overwrite? (y/n) ", filename);
+        char *resp = freadline(stdin);
+        if (strncmp(resp, "y", 1) == 0 || strncmp(resp, "Y", 1) == 0) {
+        } else {
+          fprintf(stderr, "aborting record.\n");
+          continue;
+        }
+      }
+
+      IRBYTE *command = NULL;
+      int len;
+      float resolution = 21.3333;
+
+      while (1) {
+        command = NULL;
+        len = IRs_rx(fd, resolution, &command);
+        if (len > 0) {
+          break;
+        }
+      }
+
+      FILE *fp = fopen(filename, "wb");
+      if (fp == NULL) {
+        fprintf(stderr, "Cannot open output file: %s\n", filename);
+        return E_IRBIN_OUTPUT;
+      }
+
+      fwrite(command, len, sizeof(IRBYTE), fp);
+      fclose(fp);
+
+      FREE(command);
+    } else if (strncmp(line, "p ", 2) == 0) {
+      fprintf(stderr, "playing ");
+      char *tok = strtok(line + 2 * sizeof(char), " \n");
+      char *filename = NULL;
+      while (tok != NULL) {
+        if (filename == NULL) {
+          filename = tok;
+          break;
+        }
+        tok = strtok(NULL, " \n");
+      }
+      fprintf(stderr, "%s\n", filename);
+
+      if (file_exists(filename)) {
+        IRs_set_sample_options(fd);
+        IRs_enter_transmit_unit(fd);
+        play_bin_file(filename, fd);
+      } else {
+        fprintf(stderr, "Cannot open input file: %s. ", filename);
+        fprintf(stderr, "aborting play.\n");
+      }
+    } else {
+      fprintf(stderr, "unknown command: %s\n", line);
+    }
+    FREE(line);
+  }
+  
+  return 0;
 }
 
 void print_usage(char * appname) {
@@ -213,12 +345,11 @@ void print_usage(char * appname) {
 int main(int argc, char** argv)
 {
     int retstatus = 0;
-    int cnt, i,flag;
+    int cnt, i;
     int opt;
     char *version_firmware;
     char *version_irs;
 
-    int fd;
     int res,c;
     char *param_port = NULL;
     char *param_speed = NULL;
@@ -228,9 +359,17 @@ int main(int argc, char** argv)
     char *param_timer = NULL;
     char *param_buffin = NULL;
     float resolution;
-    BOOL record = FALSE, play = FALSE, queue = FALSE, OLS = FALSE, textfile = FALSE, RESET = FALSE;
+    BOOL record = FALSE, play = FALSE, queue = FALSE, OLS = FALSE, textfile = FALSE, RESET = FALSE, interactive = FALSE;
     char dummy[3];
     int firmware_version = 0;
+
+#ifdef _WIN32
+#else
+    void (*prev_sigint)(int) = signal(SIGINT, terminate);
+    if (prev_sigint == SIG_IGN) {
+      signal(SIGTERM, SIG_IGN);
+    }
+#endif
 
     printf("+-----------------------------------------+\n");
     printf("|IR Toy Recorder/Player utility %s (CC-0)|\n", IRTOY_VERSION);
@@ -243,20 +382,20 @@ int main(int argc, char** argv)
         return E_IRTOY_OPTS;
     }
 
-    while ((opt = getopt(argc, argv, "torpqsvcexn:a:d:f:b:h:")) != -1)
+    while ((opt = getopt(argc, argv, "torpqsvcexin:a:d:f:b:h:")) != -1)
     {
         // printf("%c  \n",opt);
         switch (opt)
         {
 
         case 'v':
-            verbose=1;
+            verbose = 1;
             break;
         case 'e':
-            completereq=1;
+            completereq = TRUE;
             break;
         case 'c':
-            countreq = 1;
+            countreq = TRUE;
             break;
         case 'h':
             param_handshake = strdup(optarg);
@@ -335,6 +474,9 @@ int main(int argc, char** argv)
         case 'o':    //write to OLS format file
             OLS =TRUE;
             break;
+        case 'i':
+            interactive = TRUE;
+            break;
         case 'x':    // reset the IR toy
             RESET = TRUE;
             break;
@@ -398,12 +540,10 @@ int main(int argc, char** argv)
     fd = serial_open(param_port);
     FREE(param_port);
     if (fd < 0) {
-        fprintf(stderr, "Error opening serial port: %d\n", fd);
-        return -1;
+      return -1;
     }
 
     fprintf(stderr, "Setting up serial port...\n");
-
 #ifdef _WIN32
     serial_setup(fd, (unsigned long) param_speed);
 #else
@@ -469,9 +609,10 @@ int main(int argc, char** argv)
 
     fprintf(stderr, "Current sample timer resolution: %sus\n", param_timer);
 
-    cnt = 0;
-    c = 0;
-    flag = 0;
+    if (interactive) {
+      run_interactive(fd);
+    }
+
     if (textfile == FALSE) {
       fprintf(stderr, "binary mode\n");
       if (record==TRUE) {
@@ -488,31 +629,26 @@ int main(int argc, char** argv)
         IR_bin_play(param_fname,fd,param_delay,param_buffin);
       }
     } else {
-        fprintf(stderr, "text mode\n");
-        if (record==TRUE) {
-            IR_txt_record(param_fname);
-        }
+      fprintf(stderr, "text mode\n");
+      if (record==TRUE) {
+        IR_txt_record(param_fname);
+      }
 
-        if (play==TRUE) {
-            IR_txt_play(param_fname,fd,param_delay);
-        }
+      if (play==TRUE) {
+        IR_txt_play(param_fname,fd,param_delay);
+      }
     }
     FREE(param_buffin);
 
     if (OLS==TRUE) {
-        create_ols(param_fname);
+      create_ols(param_fname);
     }
 
     if (queue==TRUE) {
-        IRqueue(param_fname,fd);
+      IRqueue(param_fname,fd);
     }
 
     FREE(param_fname);
 
-    // wait a bit for the serial port to clear
-    fprintf(stderr, "Waiting for serial port to clear...\n");
-    sleep_(0.1);
-    serial_close(fd);
-
-    return 0;
+    terminate(0);
 }

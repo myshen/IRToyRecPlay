@@ -42,103 +42,52 @@ BOOL is_bin_file_extension_specified(char *param_fname)
 
 int IR_bin_record(char *param_fname,int fd,float resolution,char *param_buff)
 {
-  BOOL no_data_yet=TRUE, mkfile = TRUE;
-
-  int nrbytes, c;
-  char buffer[512] = {0};
-
-  IRCODE IRCode;
-  double NewIRcode;
-
   int fcounter = 0;
   char fnameseq[FILENAME_MAX];
 
   FILE *fp = NULL;
-
-  c=0;
-
-  int buflen=sizeof(buffer)/sizeof(char);
 
   if (is_bin_file_extension_specified(param_fname)) {
     fprintf(stderr, "File to record in already has bin extension. Abort.\n");
     return E_IRBIN_OUTPUT;
   }
 
-  fprintf(stderr, "Recording started with buffer size %d.\n", buflen);
+  fprintf(stderr, "Recording started.\n");
+
   fprintf(stderr, "Press a button on the remote or any key to exit... \n");
 
-  // Read #buffer bits, then dump it out to a file.
+  // Read one full IR command at a time, dump them to separate files.
   while (1) {
-    while ((nrbytes = serial_read(fd, buffer, sizeof(buffer) - 2, READ_RETRY)) > 0) {
-      // comment out to avoid exiting.
-      // if (nrbytes % 2)
-      //     exit(-1); // JTR IRTOY should ALWAYS return even number of BYTE values
+    IRBYTE *command = NULL;
+    int len = IRs_rx(fd, resolution, &command);
 
-      no_data_yet = FALSE;
+    if (len > 0) {
+      do {
+        sprintf(fnameseq, "%s_%03d.bin", param_fname, fcounter);
+        fcounter++;
+      } while (file_exists(fnameseq));
 
-      if (mkfile == TRUE) {
-        do {
-          sprintf(fnameseq, "%s_%03d.bin", param_fname, fcounter);
-          fcounter++;
-        } while (file_exists(fnameseq));
+      fprintf(stderr, "Creating file: %s\n", fnameseq);
 
-        fprintf(stderr, "Creating file: %s\n", fnameseq);
-
-        fp = fopen(fnameseq, "wb");
-        if (fp == NULL) {
-          fprintf(stderr, "Cannot open output file: %s\n",param_fname);
-          return E_IRBIN_OUTPUT;
-        } else {
-          mkfile = FALSE;
-        }
+      fp = fopen(fnameseq, "wb");
+      if (fp == NULL) {
+        fprintf(stderr, "Cannot open output file: %s\n",param_fname);
+        return E_IRBIN_OUTPUT;
       }
 
-      fprintf(stderr, "IR Toy said: \n");
-
-      // run through what was read by the toy
-      for (c = 0; c < nrbytes; c += 2) {
-        IRCode = (IRBYTE) buffer[c];
-        IRCode |= (buffer[c + 1] << 8);
-
-        // if the byte is 0xFFFF, write out the end flag to the file
-        // break out of read loop to check for interrupt
-        if (IRCode == 0xFFFF) {
-          buffer[c] = 0xFF;
-          buffer[c + 1] = 0xFF;
-
-          fprintf(stderr, " %02X ", (IRBYTE)buffer[c]);
-          fprintf(stderr, " %02X ", (IRBYTE)buffer[c + 1]);
-
-          fwrite(buffer, nrbytes, 1, fp);
-          fclose(fp);
-
-          mkfile = TRUE;
-          no_data_yet = TRUE;
-          fprintf(stderr, "Recorded command to %s. Continuing...\n", fnameseq);
-          break;
-        } else {
-          NewIRcode = ((double)IRCode * 21.3333) / resolution;
-          buffer[c] = (IRBYTE)NewIRcode;
-          buffer[c + 1] = (IRBYTE)((NewIRcode) / 256) & 0xFF;
-          fprintf(stderr, " %02X ", (IRBYTE)buffer[c]);
-          fprintf(stderr, " %02X ", (IRBYTE)buffer[c + 1]);
-        }
-      }
-
-      if (no_data_yet == TRUE) {
-        break;
-      } else {
-        fprintf(stderr, "Writing buffer to %s\n", fnameseq);
-        fwrite(buffer, nrbytes, 1, fp);
-      }
+      fwrite(command, len, sizeof(IRBYTE), fp);
+      fclose(fp);
+      fprintf(stderr, "Press a button on the remote or any key to exit... \n");
     }
+
+    FREE(command);
 
     if (kbhit()) {
       break;
     }
   }
 
-  fprintf(stderr, "Done recording.\n");
+  fprintf(stderr, "Recording finished.\n");
   return 0;
 }
 
@@ -146,10 +95,6 @@ int play_bin_file(char *fname, int fd) {
   // begin playback for open file
 
   FILE *fp = fopen(fname, "rb");
-
-  // Start transmission
-  // IRs mode IRS_TRANSMIT_unit command
-  serial_write(fd, "\x03", 1);
 
   fprintf(stderr, "Playing %s...\n", fname);
 
@@ -165,7 +110,7 @@ int play_bin_file(char *fname, int fd) {
     return -1;
   }
 
-  int totalbytes = IRs_tx_buffer(fd, file_buffer, file_size);
+  int totalbytes = IRs_tx(fd, file_buffer, file_size);
   free(file_buffer);
 
   if (totalbytes != file_size) {
@@ -174,9 +119,11 @@ int play_bin_file(char *fname, int fd) {
   }
 
   fclose(fp);
+  return totalbytes;
 }
 
 void IR_bin_play(char *param_fname, int fd, char *param_delay, char *param_buff)
 {
+  IRs_set_sample_options(fd);
   IRs_play(param_fname, fd, param_delay, play_bin_file);
 }

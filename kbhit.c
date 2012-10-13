@@ -83,3 +83,13 @@ int get_ch()
 }
 
 #endif
+
+int get_char() {
+#ifdef _WIN32
+  return getch();
+# else
+  return get_ch();
+  //return getchar_unlocked();
+# endif
+}
+

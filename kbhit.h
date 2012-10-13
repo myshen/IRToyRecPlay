@@ -27,6 +27,7 @@ void   init_keyboard(void);
 void   close_keyboard(void);
 int    kbhit(void);
 int    get_ch(void);
+int    get_char(void);
 
 #endif
 

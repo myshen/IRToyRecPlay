@@ -1,22 +1,29 @@
 /*
-    Written and maintained by the IR TOY Project and http://dangerousprototypes.com
-    WIKI page:    http://dangerousprototypes.com/usb-ir-toy-manual/
-    Forum page:   http://dangerousprototypes.com/forum/viewforum.php?f=29&sid=cdcf3a3177044bc1382305a921585bca
-********************************************************************************************************************
+Written and maintained by the IR TOY Project and http://dangerousprototypes.com
+WIKI page:    http://dangerousprototypes.com/usb-ir-toy-manual/
+Forum page:   http://dangerousprototypes.com/forum/viewforum.php?f=29&sid=cdcf3a3177044bc1382305a921585bca
+*******************************************************************************
 
 Copyright (C) 2011 Where Labs, LLC (DangerousPrototypes.com/Ian Lesnet)
 
-This work is free: you can redistribute it and/or modify it under the terms of Creative Commons Attribution ShareAlike license v3.0
+This work is free: you can redistribute it and/or modify it under the terms of
+Creative Commons Attribution ShareAlike license v3.0
 
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the License for more details. You should have received a copy of the License along with this program. If not, see <http://creativecommons.org/licenses/by-sa/3.0/>.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the License for more details. You should have received
+a copy of the License along with this program. If not, see
+<http://creativecommons.org/licenses/by-sa/3.0/>.
 
 Contact Details: http://www.DangerousPrototypes.com
 Where Labs, LLC, 208 Pine Street, Muscatine, IA 52761,USA
 
-********************************************************************************************************************* */
+*******************************************************************************
+*/
 
 #include "txt.h"
 
+extern int verbose;
 
 BOOL is_txt_file_extension_specified(char *param_fname)
 {
@@ -33,7 +40,7 @@ BOOL is_txt_file_extension_specified(char *param_fname)
   }
 }
 
-void IR_txt_record( char *param_fname)
+void IR_txt_record(char *param_fname)
 {
     int i,flag;
     unsigned long absolute=0;
@@ -60,9 +67,9 @@ void IR_txt_record( char *param_fname)
         if (fp==NULL)
         {
             if (fcounter > 0)
-                printf(" No more file(s). \n\n");
+                fprintf(stderr, "No more file(s). \n\n");
             else
-                printf(" File does not exits. \n");
+                fprintf(stderr, "File does not exits. \n");
             break;
         }
 
@@ -70,7 +77,7 @@ void IR_txt_record( char *param_fname)
         fp_txt=fopen(fnameseq_txt,"w");
         if (fp_txt==NULL)
         {
-            printf(" Error: Cannot create txt file: %s. \n",fnameseq_txt);
+            fprintf(stderr, "Error: Cannot create txt file: %s. \n",fnameseq_txt);
             break;
         }
 
@@ -106,10 +113,6 @@ int play_txt_file(char *fname, int fd) {
   // begin playback for open file
 
   FILE *fp = fopen(fname, "rt");
-
-  // Start transmission
-  // IRs mode IRS_TRANSMIT_unit command
-  serial_write(fd, "\x03", 1);
 
   fprintf(stderr, "Playing %s...\n", fname);
 
@@ -153,7 +156,7 @@ int play_txt_file(char *fname, int fd) {
   }
   free(file_buffer);
 
-  int totalbytes = IRs_tx_buffer(fd, bin_buffer, bin_size);
+  int totalbytes = IRs_tx(fd, bin_buffer, bin_size);
   free(bin_buffer);
 
   if (totalbytes != bin_size) {
@@ -166,5 +169,6 @@ int play_txt_file(char *fname, int fd) {
 
 void IR_txt_play(	char *param_fname,int fd,char *param_delay)
 {
+  IRs_set_sample_options(fd);
   IRs_play(param_fname, fd, param_delay, play_txt_file);
 }

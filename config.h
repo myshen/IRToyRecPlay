@@ -27,6 +27,9 @@ typedef bool BOOL;
 
 #define IRTOY_VERSION "v21"
 
+#undef RETRIES
+#define RETRIES 2
+
 unsigned int sleep_(float);
 int get_char(void);
 BOOL file_exists(const char * filename);

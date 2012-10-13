@@ -225,11 +225,15 @@ int serial_open(char *port)
 		fd = (int)hCom;
 	}
 #else
-	fd = open(port, O_RDWR | O_NOCTTY | O_NDELAY | O_NONBLOCK);
+  fprintf(stderr, "opening serial port %s\n", port);
+	// O_NDELAY is superceded by O_NONBLOCK in POSIX
+	fd = open(port, O_RDWR | O_NOCTTY | O_NONBLOCK);
 	if (fd == -1) {
 		fprintf(stderr, "Could not open serial port: ");
     if (errno == ENOENT) {
       fprintf(stderr, "No such file or directory: %s\n", port);
+    } else if (errno == EAGAIN) {
+      fprintf(stderr, "Serial port %s is already memory-mapped by another process.\n", port);
     } else {
       fprintf(stderr, "errno: %d\n", errno);
     }

@@ -40,6 +40,7 @@ Where Labs, LLC, 208 Pine Street, Muscatine, IA 52761,USA
 #include "kbhit.h"
 
 int IR_bin_record(char *,int,float,char *);
+int play_bin_file(char *fname, int fd);
 void IR_bin_play(char *,int,char *,char *);
 
 #endif // BIN_H_INCLUDED
